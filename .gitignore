@@ -1,8 +1,8 @@
-# Data & model artifacts (generated, not source)
+# Data & model artifacts (generated, not source - models are written to
+# MinIO/S3A by the pipeline, never to a local path, so there's no local
+# models dir to exclude here)
 data/raw/
 data/processed/
-spark_jobs/models/
-!spark_jobs/models/.gitkeep
 
 # Python
 __pycache__/
