@@ -70,7 +70,11 @@ class TestClean:
         assert cleaned.count() == 1
         assert cleaned.collect()[0]["flow_duration"] == 100
 
-    def test_nulls_out_infinity_and_nan_rate_values(self, spark):
+    def test_imputes_infinity_and_nan_rate_values_with_sentinel(self, spark):
+        # imputed to -1.0, not left null: VectorAssembler(handleInvalid="keep")
+        # turns a null numeric input into NaN in the assembled vector, which
+        # GBTClassifier's tree code rejects outright (confirmed against real
+        # data - see clean()'s docstring)
         df = _make_df(spark, [
             _default_row(flow_bytes_per_s=float("inf")),
             _default_row(flow_bytes_per_s=float("nan"), destination_port=81),
@@ -80,9 +84,9 @@ class TestClean:
         cleaned, stats = ec.clean(df)
         rows = {r["destination_port"]: r["flow_bytes_per_s"] for r in cleaned.collect()}
 
-        assert stats["rate_column_infinity_or_nan_nulled"]["flow_bytes_per_s"] == 2
-        assert rows[80] is None
-        assert rows[81] is None
+        assert stats["rate_column_infinity_or_nan_imputed"]["flow_bytes_per_s"] == 2
+        assert rows[80] == -1.0
+        assert rows[81] == -1.0
         assert rows[82] == 500.0
 
     def test_removes_exact_duplicate_flows(self, spark):

@@ -67,9 +67,20 @@ def read_day(spark, path: str, day: str):
 
 def clean(df):
     """Pure transformation (no file I/O): drops physically-invalid rows,
-    nulls out Infinity/NaN rate values, dedupes, and derives attack_category.
-    Returns (cleaned_df, stats_dict) so it's unit-testable against a tiny
-    in-memory DataFrame."""
+    imputes Infinity/NaN rate values with a -1 sentinel, dedupes, and derives
+    attack_category. Returns (cleaned_df, stats_dict) so it's unit-testable
+    against a tiny in-memory DataFrame.
+
+    Infinity/NaN rate values are imputed to -1.0, not left null: downstream,
+    VectorAssembler(handleInvalid="keep") turns a null *numeric* input into
+    NaN in the assembled vector (its "keep" handling is for indexer/encoder
+    categories, not this), and GBTClassifier's tree-metadata step rejects any
+    NaN in the feature vector outright - confirmed by actually running this
+    against the real 3-day dataset, where training crashed on exactly the
+    rows this step nulls out. -1 is an unambiguous "rate undefined because
+    duration was 0" sentinel, same convention the fraud-detection-spark
+    reference project uses for its own undefined-value features.
+    """
     total_before = df.count()
 
     negative_duration = df.filter(F.col("flow_duration") < 0).count()
@@ -79,7 +90,7 @@ def clean(df):
     for c in CICIDS2017_RATE_COLUMNS:
         is_bad = F.isnan(F.col(c)) | (F.abs(F.col(c)) == float("inf"))
         rate_issue_counts[c] = df.filter(is_bad).count()
-        df = df.withColumn(c, F.when(is_bad, F.lit(None)).otherwise(F.col(c)))
+        df = df.withColumn(c, F.when(is_bad, F.lit(-1.0)).otherwise(F.col(c)))
 
     before_dedup = df.count()
     df = df.dropDuplicates([c for c in df.columns if c not in ("source_day", "split")])
@@ -95,7 +106,7 @@ def clean(df):
     stats = {
         "total_before_cleaning": total_before,
         "negative_duration_rows_dropped": negative_duration,
-        "rate_column_infinity_or_nan_nulled": rate_issue_counts,
+        "rate_column_infinity_or_nan_imputed": rate_issue_counts,
         "duplicates_removed": duplicates_removed,
         "final_cleaned_rows": df.count(),
     }
